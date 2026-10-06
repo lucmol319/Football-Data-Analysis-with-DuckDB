@@ -1,5 +1,4 @@
 import duckdb
-print(duckdb.sql("SELECT 42 AS answer"))
 
 con = duckdb.connect("football.duckdb")  # saves your work to a file
 
@@ -54,6 +53,7 @@ con.sql("""
     ORDER BY filename
 """).show()
 
+# Maybe turn it into a download step that saves files into data/
 duckdb.sql("""
     SELECT HomeTeam, AwayTeam, FTHG, FTAG, FTR
     FROM read_csv('https://www.football-data.co.uk/mmz4281/2526/E0.csv')
