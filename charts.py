@@ -21,6 +21,10 @@ def load_complete_seasons():
     return rows
 
 def plot_home_win_rate(rows):
+    """
+    Reads season_summary from football.duckdb and saves a chart of home win rate by season to output/home_win_rate_by_season.png.
+    It includes the average across seasons, a note on 2020-21, and error bars.
+    """
     seasons = [r[0] for r in rows]
     matches = [r[1] for r in rows]
     rate = [r[2] for r in rows]
@@ -55,12 +59,57 @@ def plot_home_win_rate(rows):
     fig.savefig(dest, dpi=150, bbox_inches="tight")
     print(f"Saved chart to {dest}")
 
+def load_calibration(min_matches=30):
+    """Probability bands with enough matches to be worth plotting."""
+    con = duckdb.connect(str(DB_PATH), read_only=True)
+    rows = con.sql(f"""
+        SELECT outcome, n, avg_predicted, actual_rate
+        FROM calibration
+        WHERE n >= {min_matches}
+        ORDER BY outcome, bin_start
+    """).fetchall()
+    con.close()
+    return rows
+
+def plot_calibration(rows):
+    """If odds are well calibrated, points sit on the diagonal line."""
+    fig, ax = plt.subplots(figsize=(7, 7))
+    ax.plot([0, 1], [0, 1], linestyle="--", color="gray", label="Perfect calibration")
+
+    for outcome in ["Home win", "Draw", "Away win"]:
+        pts = [r for r in rows if r[0] == outcome]
+        if not pts:
+            continue
+        ax.plot([r[2] for r in pts], [r[3] for r in pts], "-", alpha=0.4)
+        ax.scatter([r[2] for r in pts], [r[3] for r in pts],
+                   s=[r[1] ** 0.5 * 6 for r in pts], label=outcome)
+
+    ax.set_title("Bet365 odds as forecasts: predicted vs actual")
+    ax.set_xlabel("Probability implied by the odds")
+    ax.set_ylabel("How often it actually happened")
+    ax.xaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
+    ax.yaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.grid(alpha=0.3)
+    ax.legend(loc="upper left")
+
+    # Saves output/odds_calibration.png. If the odds are well calibrated, the points sit on the dashed diagonal.
+    # Bigger dots mean more matches, and bands with fewer than 30 matches are dropped.
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    dest = OUTPUT_DIR / "odds_calibration.png"
+    fig.savefig(dest, dpi=150, bbox_inches="tight")
+    print(f"Saved chart to {dest}")
+
 def main():
     rows = load_complete_seasons()
     if not rows:
         print("No complete seasons found. Run main.py first.")
         return
     plot_home_win_rate(rows)
+    calibration_rows = load_calibration()
+    if calibration_rows:
+        plot_calibration(calibration_rows)
 
 if __name__ == "__main__":
     main()
