@@ -3,6 +3,7 @@ from pathlib import Path
 import duckdb
 import matplotlib.pyplot as plt
 from matplotlib.ticker import PercentFormatter
+import numpy as np
 
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "football.duckdb"
@@ -101,15 +102,96 @@ def plot_calibration(rows):
     fig.savefig(dest, dpi=150, bbox_inches="tight")
     print(f"Saved chart to {dest}")
 
+def load_team_gaps(min_seasons=5):
+    """Average gap per season for teams with enough full seasons."""
+    con = duckdb.connect(str(DB_PATH), read_only=True)
+    rows = con.sql(f"""
+        SELECT team, AVG(goal_diff_vs_shots) AS avg_gap, COUNT(*) AS seasons
+        FROM team_seasons
+        WHERE is_full_season
+        GROUP BY team
+        HAVING COUNT(*) >= {min_seasons}
+        ORDER BY avg_gap
+    """).fetchall()
+    con.close()
+    return rows
+
+
+def plot_team_gaps(rows, show_each_end=10):
+    """Bar chart of the teams furthest above and below their shot-based expectation."""
+    if len(rows) > show_each_end * 2:
+        rows = rows[:show_each_end] + rows[-show_each_end:]
+    labels = [f"{r[0]} ({r[2]})" for r in rows]
+    gaps = [r[1] for r in rows]
+
+    fig, ax = plt.subplots(figsize=(9, 8))
+    colours = ["tab:green" if g >= 0 else "tab:red" for g in gaps]
+    ax.barh(labels, gaps, color=colours)
+    ax.axvline(0, color="black", linewidth=0.8)
+    ax.set_title("Goal difference vs what shots suggest, average per season")
+    ax.set_xlabel("Goals per season above (+) or below (-) the shot-based expectation")
+    ax.grid(axis="x", alpha=0.3)
+    fig.text(0.01, 0.01, "Number of full seasons in brackets. Shots are a crude measure "
+             "(no shot quality), so read this as a clue, not a verdict.", fontsize=8)
+
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    dest = OUTPUT_DIR / "team_gap_vs_shots.png"
+    fig.savefig(dest, dpi=150, bbox_inches="tight")
+    print(f"Saved chart to {dest}")
+
+
+def load_persistence():
+    con = duckdb.connect(str(DB_PATH), read_only=True)
+    rows = con.sql("SELECT gap, next_gap FROM performance_persistence").fetchall()
+    con.close()
+    return rows
+
+
+def plot_persistence(rows):
+    """If over-performance were a lasting skill, points would slope upward."""
+    x = np.array([r[0] for r in rows])
+    y = np.array([r[1] for r in rows])
+    r_value = np.corrcoef(x, y)[0, 1]
+    slope, intercept = np.polyfit(x, y, 1)
+
+    fig, ax = plt.subplots(figsize=(7, 7))
+    ax.scatter(x, y, alpha=0.6)
+    xs = np.array([x.min(), x.max()])
+    ax.plot(xs, slope * xs + intercept, color="tab:red",
+            label=f"Trend line (correlation {r_value:.2f})")
+    ax.axhline(0, color="gray", linewidth=0.8)
+    ax.axvline(0, color="gray", linewidth=0.8)
+    ax.set_title("Does beating your shot numbers carry over to next season?")
+    ax.set_xlabel("Gap this season (goal difference vs shots)")
+    ax.set_ylabel("Gap the following season")
+    ax.grid(alpha=0.3)
+    ax.legend(loc="upper left")
+
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    dest = OUTPUT_DIR / "gap_persistence.png"
+    fig.savefig(dest, dpi=150, bbox_inches="tight")
+    print(f"Saved chart to {dest}")
+
 def main():
+    # Question 1: Home win rate
     rows = load_complete_seasons()
     if not rows:
         print("No complete seasons found. Run main.py first.")
         return
     plot_home_win_rate(rows)
+
+    # Question 2: Calibration
     calibration_rows = load_calibration()
     if calibration_rows:
         plot_calibration(calibration_rows)
+
+    # Question 3: Team gaps and performance persistence
+    team_gaps = load_team_gaps()
+    if team_gaps:
+        plot_team_gaps(team_gaps)
+    persistence = load_persistence()
+    if len(persistence) >= 3:
+        plot_persistence(persistence)
 
 if __name__ == "__main__":
     main()
